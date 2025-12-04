@@ -205,7 +205,7 @@ CREATE TABLE HORARIOS (
 -- 6. FACTURACIÓN E INVENTARIO
 CREATE TABLE FACTURAS_TIENDA (
     nro_factura     NUMBER(6) NOT NULL,
-    id_tienda       NUMBER(4),
+    id_tienda       NUMBER(4) NOT NULL,
     total           NUMBER(10, 2) NOT NULL,
     fecha_emision   DATE NOT NULL,
     id_cliente_lego NUMBER(6) NOT NULL,
@@ -217,13 +217,14 @@ CREATE TABLE FACTURAS_TIENDA (
 
 CREATE TABLE DETALLES_FACTURA_TIENDA (
     nro_factura     NUMBER(6) NOT NULL,
+    id_tienda       NUMBER(4) NOT NULL,
     id              NUMBER(6) NOT NULL,
     cantidad        NUMBER(2) NOT NULL,
     tipo_cliente    CHAR(2) CHECK (tipo_cliente IN ('A', 'N')) NOT NULL,
 
 --// ‘A’ significa ADULTO, ‘N’ significa NINO
 
-    CONSTRAINT PK_DETALLES_FACTURA_TIENDA PRIMARY KEY (nro_factura, id),
+    CONSTRAINT PK_DETALLES_FACTURA_TIENDA PRIMARY KEY (nro_factura,id_tienda, id),
     CONSTRAINT FK_DET_FACTURA FOREIGN KEY (nro_factura) REFERENCES FACTURAS_TIENDA (nro_factura)
 );
 
