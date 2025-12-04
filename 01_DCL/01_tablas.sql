@@ -101,7 +101,7 @@ CREATE TABLE CATALOGO_PAISES (
 );
 
 CREATE TABLE HIST_PRECIOS (
-    id_juguete     NUMBER NOT NULL,
+    id_juguete     NUMBER(4) NOT NULL,
     fecha_inicio    DATE NOT NULL,
     fecha_fin       DATE,
     precio          NUMBER(10, 2) NOT NULL,
