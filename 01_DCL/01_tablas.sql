@@ -10,7 +10,7 @@ CREATE TABLE PAIS (
     nombre          VARCHAR2(25) NOT NULL,
     continente      CHAR(2) CHECK (continente IN ('AM', 'EU','OC','AS', 'AF' )),NOT NULL,
     nacionalidad    VARCHAR2(15) NOT NULL,
-    ue      CHAR(2) CHECK (continente IN ('SI', 'NO')),NOT NULL,
+    ue      CHAR(2) CHECK (ue IN ('SI', 'NO')),NOT NULL,
     CONSTRAINT PK_PAIS PRIMARY KEY (id),
     CONSTRAINT UQ_PAIS_NOMBRE UNIQUE (nombre)
 );
