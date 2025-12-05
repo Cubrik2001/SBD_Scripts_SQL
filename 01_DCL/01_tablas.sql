@@ -165,6 +165,7 @@ CREATE TABLE INSCRITOS (
     id_visitante_lego   NUMBER NOT NULL,
     id_cliente_lego     NUMBER NOT NULL,
     CONSTRAINT PK_INSCRITOS PRIMARY KEY (fecha_tour_inscrito,nro_inscripcion,id),
+    CONSTRAINT CK_ARCO_PARTICIPANTE CHECK((id_visitante_lego IS NULL AND id_cliente_lego IS NOT NULL) OR (id_visitante_lego IS NOT NULL AND id_cliente_lego IS NULL)),
     CONSTRAINT FK_INSCRITOS_INSCRIP FOREIGN KEY (nro_inscripcion) REFERENCES INSCRIPCIONES (numero),
     CONSTRAINT FK_INSCRITOS_VISIT FOREIGN KEY (id_visitante_lego) REFERENCES VISITANTE_MENORES (id_lego),
     CONSTRAINT FK_INSCRITOS_CLIENTE FOREIGN KEY (id_cliente_lego) REFERENCES CLIENTES (id_lego)
