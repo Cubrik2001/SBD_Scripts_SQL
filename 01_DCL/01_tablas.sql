@@ -94,7 +94,7 @@ CREATE TABLE CATALOGO_PAISES (
     id_pais         NUMBER(3) NOT NULL,
     id_juguete_lego NUMBER(4) NOT NULL,
     limite_compra   NUMBER(2) NOT NULL,
-    CONSTRAINT PK_CATALOGO_PAIS PRIMARY KEY (id_pais),
+    CONSTRAINT PK_CATALOGO_PAIS PRIMARY KEY (id_pais,id_juguete_lego),
     CONSTRAINT FK_CATALOGO_PAIS FOREIGN KEY (id_pais) REFERENCES PAISES (id),
     CONSTRAINT FK_CATALOGO_PROD FOREIGN KEY (id_juguete_lego) REFERENCES JUGUETES_LEGO (id)
 );
@@ -147,26 +147,26 @@ CREATE TABLE TOURS (
     CONSTRAINT CK_REGALA CHECK (regala_producto IN ('S', 'N'))
 );
 
--- 5. OPERACIONES
 CREATE TABLE INSCRIPCIONES (
     fecha_tour      DATE NOT NULL,
     numero          NUMBER(6) NOT NULL,
     fecha           DATE NOT NULL,
-    costo_total     NUMBER(5,2) NOT NULL,
+    costo_total     NUMBER(10,2) NOT NULL,
     status          VARCHAR2(9) NOT NULL, 
-    CONSTRAINT PK_INSCRIPCION PRIMARY KEY (numero,id_tour),
-    CONSTRAINT FK_INSCRIPCION_TOUR FOREIGN KEY (id_tour) REFERENCES TOURS (id)
+    CONSTRAINT PK_INSCRIPCION PRIMARY KEY (fecha_tour, numero),
+    CONSTRAINT FK_INSCRIPCION_TOUR FOREIGN KEY (fecha_tour) REFERENCES TOURS (fecha_inicio)
 );
---falta el constraint del arco exclusivo
+
 CREATE TABLE INSCRITOS (
     fecha_tour_inscrito DATE NOT NULL,
     nro_inscripcion     NUMBER(6) NOT NULL,
-    id                  NUMBER(4),
-    id_visitante_lego   NUMBER NOT NULL,
-    id_cliente_lego     NUMBER NOT NULL,
-    CONSTRAINT PK_INSCRITOS PRIMARY KEY (fecha_tour_inscrito,nro_inscripcion,id),
+    id                  NUMBER(4) NOT NULL,
+    id_visitante_lego   NUMBER(6),             
+    id_cliente_lego     NUMBER(6),             
+    
+    CONSTRAINT PK_INSCRITOS PRIMARY KEY (fecha_tour_inscrito, nro_inscripcion, id),
     CONSTRAINT CK_ARCO_PARTICIPANTE CHECK((id_visitante_lego IS NULL AND id_cliente_lego IS NOT NULL) OR (id_visitante_lego IS NOT NULL AND id_cliente_lego IS NULL)),
-    CONSTRAINT FK_INSCRITOS_INSCRIP FOREIGN KEY (nro_inscripcion) REFERENCES INSCRIPCIONES (numero),
+    CONSTRAINT FK_INSCRITOS_INSCRIP FOREIGN KEY (fecha_tour_inscrito, nro_inscripcion) REFERENCES INSCRIPCIONES (fecha_tour, numero),
     CONSTRAINT FK_INSCRITOS_VISIT FOREIGN KEY (id_visitante_lego) REFERENCES VISITANTE_MENORES (id_lego),
     CONSTRAINT FK_INSCRITOS_CLIENTE FOREIGN KEY (id_cliente_lego) REFERENCES CLIENTES (id_lego)
 );
@@ -176,9 +176,9 @@ CREATE TABLE ENTRADAS (
     nro_inscripcion_tour NUMBER(6) NOT NULL,
     id              NUMBER(6) NOT NULL,
     tipo_cliente    CHAR(1) NOT NULL,
-    CONSTRAINT CK_TIPO_CLIENTE_ENTRADA CHECK (tipo_cliente IN ('A', 'N')) --‘A’ significa ADULTO, ‘N’ significa NINO
+    CONSTRAINT CK_TIPO_CLIENTE_ENTRADA CHECK (tipo_cliente IN ('A', 'N')), --‘A’ significa ADULTO, ‘N’ significa NINO
     CONSTRAINT PK_ENTRADAS PRIMARY KEY (fecha_tour_ins,nro_inscripcion_tour, id),
-    CONSTRAINT FK_ENTRADAS_INSCRIP FOREIGN KEY (nro_inscripcion_tour) REFERENCES INSCRIPCIONES (numero)
+    CONSTRAINT FK_ENTRADAS_INSCRIP FOREIGN KEY (fecha_tour_ins,nro_inscripcion_tour) REFERENCES INSCRIPCIONES (fecha_tour,numero)
 );
 
 CREATE TABLE TIENDAS (
@@ -194,12 +194,12 @@ CREATE TABLE TIENDAS (
 );
 
 CREATE TABLE HORARIOS (
-    dia_semana      NUMBER(1) NULL,
+    id_tienda_ap    NUMBER(4) NOT NULL,
+    dia_semana      NUMBER(1) NOT NULL,
     hora_apertura   VARCHAR2(10) NOT NULL,
     hora_cierre     VARCHAR2(10) NOT NULL,
-    id_tienda
-    CONSTRAINT PK_HORARIOS PRIMARY KEY ( dia_semana),
-    CONSTRAINT FK_HORARIOS_TIENDA FOREIGN KEY (id_tienda) REFERENCES TIENDAS (id)
+    CONSTRAINT PK_HORARIOS PRIMARY KEY (id_tienda_ap,dia_semana),
+    CONSTRAINT FK_HORARIOS_TIENDA FOREIGN KEY (id_tienda_ap) REFERENCES TIENDAS (id)
 );
 
 -- 6. FACTURACIÓN E INVENTARIO
@@ -216,23 +216,24 @@ CREATE TABLE FACTURAS_TIENDA (
 
 
 CREATE TABLE DETALLES_FACTURA_TIENDA (
-    nro_factura     NUMBER(6) NOT NULL,
-    id_tienda       NUMBER(4) NOT NULL,
+    nro_factura_t     NUMBER(6) NOT NULL,
+    id_tienda_c       NUMBER(4) NOT NULL,
     id              NUMBER(6) NOT NULL,
     cantidad        NUMBER(2) NOT NULL,
     tipo_cliente    CHAR(2) CHECK (tipo_cliente IN ('A', 'N')) NOT NULL,
 
 --// ‘A’ significa ADULTO, ‘N’ significa NINO
 
-    CONSTRAINT PK_DETALLES_FACTURA_TIENDA PRIMARY KEY (nro_factura,id_tienda, id),
-    CONSTRAINT FK_DET_FACTURA FOREIGN KEY (nro_factura) REFERENCES FACTURAS_TIENDA (nro_factura)
+    CONSTRAINT PK_DETALLES_FACTURA_TIENDA PRIMARY KEY (nro_factura_t,id_tienda_c, id),
+    CONSTRAINT FK_DET_FACTURA FOREIGN KEY (nro_factura_t,id_tienda_c) REFERENCES FACTURAS_TIENDA (nro_factura,id_tienda)
 );
 
 CREATE TABLE LOTES_INVENTARIO (
     id_tienda       NUMBER(4) NOT NULL,
-    id_juguete     NUMBER(4) NULL,
+    id_juguete     NUMBER(4) NOT NULL,
     id_lote         NUMBER(4) NOT NULL,
     cantidad        NUMBER(2) NOT NULL,
+    CONSTRAINT CK_CANT CHECK(cantidad >= 0),
     CONSTRAINT PK_LOTES PRIMARY KEY (id_tienda,id_juguete,id_lote),
     CONSTRAINT FK_LOTES_TIENDA FOREIGN KEY (id_tienda) REFERENCES TIENDAS (id),
     CONSTRAINT FK_LOTES_PROD FOREIGN KEY (id_juguete) REFERENCES JUGUETES_LEGO (id)
@@ -246,19 +247,18 @@ CREATE TABLE DESCUENTO_L_INVENTARIO (
     fecha           DATE NOT NULL,
     cant_descontar  NUMBER(2) NOT NULL,
     CONSTRAINT PK_DESC_INVENTARIO PRIMARY KEY (id_tienda ,id_juguete,id_lote ,id),
-    CONSTRAINT FK_DESC_LOTE FOREIGN KEY (id_lote) REFERENCES LOTES_INVENTARIO (id_lote),
-    CONSTRAINT FK_DESC_LOTE FOREIGN KEY (id_juguete ) REFERENCES LOTES_INVENTARIO (id_juguete ),
-    CONSTRAINT FK_DESC_LOTE FOREIGN KEY (id_tienda) REFERENCES LOTES_INVENTARIO (id_tienda )
+    CONSTRAINT FK_DESC_LOTE_COMPLETO FOREIGN KEY (id_tienda, id_juguete, id_lote) 
+        REFERENCES LOTES_INVENTARIO (id_tienda, id_juguete, id_lote)
 );
 
 CREATE TABLE FACTURAS_ONLINE (
     numero_venta     number(7) NOT NULL,
     fecha_venta     DATE NOT NULL,
-    gratis          CHAR(1) not null,
-    id_lego_cliente NUMBER(6) not null,
+    gratis          CHAR(1) NOT NULL,
+    id_lego_cliente NUMBER(6) NOT NULL,
     total           NUMBER(4,2) NOT NULL,
     puntos_generados NUMBER(3) NOT NULL,
-    CONSTRAINT PK_FACTURAS_ONLINE PRIMARY KEY(numero_venta)
+    CONSTRAINT PK_FACTURAS_ONLINE PRIMARY KEY(numero_venta),
     CONSTRAINT CK_GRATIS check (gratis IN ('S','N')),
     CONSTRAINT FK_FACTURA_ONLINE_CLIENTE FOREIGN KEY (id_lego_cliente) REFERENCES Clientes (id_lego)
 );
@@ -272,7 +272,7 @@ CREATE TABLE DET_FACTURAS_ONLINE (
     id_pais_cat     NUMBER(3) NOT NULL,
     CONSTRAINT CK_TIPO_CLIENTE_DETALLE_ONLINE CHECK (tipo_cliente IN ('A','J','M')), --ADULTO,JOVEN O MENOR
     CONSTRAINT FK_DETALLE_ONLINE_FACTURA_ONLINE FOREIGN KEY (numeroventa) REFERENCES FACTURAS_ONLINE (numeroventa),
-    CONSTRAINT FK_DETALLE_ONLINE_CATALOGO_PAISES FOREIGN KEY (id_juguete_cat,id_pais_cat) REFERENCES CATALOGO_PAISES (id_juguete,id_pais),
+    CONSTRAINT FK_DETALLE_ONLINE_CATALOGO_PAISES FOREIGN KEY (id_pais_cat,id_juguete_cat) REFERENCES CATALOGO_PAISES (id_pais,id_juguete_lego),
     CONSTRAINT PK_DETALLE_FACTURA_VENTAS_ONLINE PRIMARY KEY (numeroventa,id)
 );
 
