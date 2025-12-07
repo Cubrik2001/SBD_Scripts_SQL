@@ -8,31 +8,30 @@
 CREATE TABLE PAISES (
     id              NUMBER(3) NOT NULL,
     nombre          VARCHAR2(25) NOT NULL UNIQUE,
-    continente      CHAR(2) NOT NULL,
+    continente      VARCHAR2(2) NOT NULL,
     nacionalidad    VARCHAR2(15) NOT NULL,
-    ue      CHAR(1) NOT NULL,
+    ue              VARCHAR2(1) NOT NULL,
     CONSTRAINT PK_PAIS PRIMARY KEY (id),
     CONSTRAINT CK_CONTINENTE CHECK (continente IN ('AM','EU','OC','AS','AF')),
-    CONSTRAINT CK_UE CHECK (ue IN ('S','N')) 
+    CONSTRAINT CK_UE CHECK (ue IN ('S','N'))
 );
-
 
 CREATE TABLE ESTADOS (
     id_pais         NUMBER(3) NOT NULL,
-    id              NUMBER(5) NOT NULL,
+    id_estado       NUMBER(5) NOT NULL,
     nombre          VARCHAR2(25) NOT NULL,
-    CONSTRAINT PK_ESTADOS PRIMARY KEY (id_pais, id),
+    CONSTRAINT PK_ESTADOS PRIMARY KEY (id_pais, id_estado),
     CONSTRAINT FK_ESTADOS_PAIS FOREIGN KEY (id_pais) REFERENCES PAISES (id)
 );
 
 CREATE TABLE CIUDADES (
     id_pais         NUMBER(3) NOT NULL,
     id_estado       NUMBER(5) NOT NULL,
-    id              NUMBER(5) NOT NULL,
+    id_ciudad       NUMBER(5) NOT NULL,
     nombre          VARCHAR2(25) NOT NULL,
-    CONSTRAINT PK_CIUDADES PRIMARY KEY (id_pais, id_estado, id),
+    CONSTRAINT PK_CIUDADES PRIMARY KEY (id_pais, id_estado, id_ciudad),
     CONSTRAINT FK_CIUDADES_ESTADO FOREIGN KEY (id_pais, id_estado) 
-    REFERENCES ESTADOS (id_pais, id)
+        REFERENCES ESTADOS (id_pais, id_estado)
 );
 
 -- 2. PERSONAS (CLIENTES Y VISITANTE_MENORES)
@@ -62,7 +61,7 @@ CREATE TABLE VISITANTE_MENORES (
     segundo_apellido    VARCHAR2(20) NOT NULL,
     doc_identidad       VARCHAR2(20) NOT NULL UNIQUE,
     fecha_nacimiento    DATE NOT NULL,
-    pasaporte  VARCHAR2(10) NOT NULL,
+    pasaporte           VARCHAR2(10) NOT NULL,
     id_pais_nac         NUMBER(3) NOT NULL,
     id_cliente_repres   NUMBER(6), -- Puede ser nulo si es mayor de 18
     segundo_nombre      VARCHAR2(20),
@@ -79,7 +78,7 @@ CREATE TABLE JUGUETES_LEGO (
     descripcion     VARCHAR2(250) NOT NULL,
     rango_edad      VARCHAR2(20) NOT NULL,
     rango_precio    VARCHAR2(20) NOT NULL,
-    j_set           CHAR(1) NOT NULL,
+    j_set           VARCHAR2(1) NOT NULL,
     set_detalle     NUMBER(4), --Puede ser nulo
     instrucciones   VARCHAR2(3000), --Puede ser nulo
     nro_piezas      NUMBER(4),
@@ -121,7 +120,7 @@ CREATE TABLE TEMAS (
     id                  NUMBER(2) NOT NULL,
     nombre              VARCHAR2(20) NOT NULL,
     descripcion         VARCHAR2(250) NOT NULL,
-    tipo                CHAR(1) NOT NULL,
+    tipo                VARCHAR2(1) NOT NULL,
     id_tema_principal   NUMBER(2),
     CONSTRAINT PK_TEMAS PRIMARY KEY (id),
     CONSTRAINT UQ_TEMAS_NOMBRE UNIQUE (nombre), 
@@ -141,7 +140,7 @@ CREATE TABLE TOURS (
     fecha_inicio        DATE  NOT NULL,
     precio_por_persona  NUMBER(10, 2) NOT NULL,
     capacidad_maxima    NUMBER(2) NOT NULL,
-    regala_producto     CHAR(1) NOT NULL,
+    regala_producto     VARCHAR2(1) NOT NULL,
     descripcion_producto VARCHAR2(250),
     CONSTRAINT PK_TOURS PRIMARY KEY (fecha_inicio),
     CONSTRAINT CK_REGALA CHECK (regala_producto IN ('S', 'N'))
@@ -175,7 +174,7 @@ CREATE TABLE ENTRADAS (
     fecha_tour_ins DATE NOT NULL,
     nro_inscripcion_tour NUMBER(6) NOT NULL,
     id              NUMBER(6) NOT NULL,
-    tipo_cliente    CHAR(1) NOT NULL,
+    tipo_cliente    VARCHAR2(1) NOT NULL,
     CONSTRAINT CK_TIPO_CLIENTE_ENTRADA CHECK (tipo_cliente IN ('A', 'N')), --‘A’ significa ADULTO, ‘N’ significa NINO
     CONSTRAINT PK_ENTRADAS PRIMARY KEY (fecha_tour_ins,nro_inscripcion_tour, id),
     CONSTRAINT FK_ENTRADAS_INSCRIP FOREIGN KEY (fecha_tour_ins,nro_inscripcion_tour) REFERENCES INSCRIPCIONES (fecha_tour,numero)
@@ -216,11 +215,11 @@ CREATE TABLE FACTURAS_TIENDA (
 
 
 CREATE TABLE DETALLES_FACTURA_TIENDA (
-    nro_factura_t     NUMBER(6) NOT NULL,
-    id_tienda_c       NUMBER(4) NOT NULL,
+    nro_factura_t   NUMBER(6) NOT NULL,
+    id_tienda_c     NUMBER(4) NOT NULL,
     id              NUMBER(6) NOT NULL,
     cantidad        NUMBER(2) NOT NULL,
-    tipo_cliente    CHAR(2) CHECK (tipo_cliente IN ('A', 'N')) NOT NULL,
+    tipo_cliente    VARCHAR2(2) CHECK (tipo_cliente IN ('A', 'N')) NOT NULL,
 
 --// ‘A’ significa ADULTO, ‘N’ significa NINO
 
@@ -254,7 +253,7 @@ CREATE TABLE DESCUENTO_L_INVENTARIO (
 CREATE TABLE FACTURAS_ONLINE (
     numero_venta     number(7) NOT NULL,
     fecha_venta     DATE NOT NULL,
-    gratis          CHAR(1) NOT NULL,
+    gratis          VARCHAR2(1) NOT NULL,
     id_lego_cliente NUMBER(6) NOT NULL,
     total           NUMBER(4,2) NOT NULL,
     puntos_generados NUMBER(3) NOT NULL,
@@ -267,11 +266,11 @@ CREATE TABLE DET_FACTURAS_ONLINE (
     numeroventa     NUMBER(7) NOT NULL,
     id              NUMBER(2) NOT NULL,
     cantidad        NUMBER(2) NOT NULL,
-    tipo_cliente    CHAR(1) NOT NULL,
+    tipo_cliente    VARCHAR2(1) NOT NULL,
     id_juguete_cat  NUMBER(4) NOT NULL,
     id_pais_cat     NUMBER(3) NOT NULL,
     CONSTRAINT CK_TIPO_CLIENTE_DETALLE_ONLINE CHECK (tipo_cliente IN ('A','J','M')), --ADULTO,JOVEN O MENOR
-    CONSTRAINT FK_DETALLE_ONLINE_FACTURA_ONLINE FOREIGN KEY (numeroventa) REFERENCES FACTURAS_ONLINE (numeroventa),
+    CONSTRAINT FK_DETALLE_ONLINE_FACTURA_ONLINE FOREIGN KEY (numeroventa) REFERENCES FACTURAS_ONLINE (numero_venta),
     CONSTRAINT FK_DETALLE_ONLINE_CATALOGO_PAISES FOREIGN KEY (id_pais_cat,id_juguete_cat) REFERENCES CATALOGO_PAISES (id_pais,id_juguete_lego),
     CONSTRAINT PK_DETALLE_FACTURA_VENTAS_ONLINE PRIMARY KEY (numeroventa,id)
 );
