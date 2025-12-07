@@ -195,8 +195,8 @@ CREATE TABLE TIENDAS (
 CREATE TABLE HORARIOS (
     id_tienda_ap    NUMBER(4) NOT NULL,
     dia_semana      NUMBER(1) NOT NULL,
-    hora_apertura   VARCHAR2(10) NOT NULL,
-    hora_cierre     VARCHAR2(10) NOT NULL,
+    hora_apertura   DATE NOT NULL,
+    hora_cierre     DATE NOT NULL,
     CONSTRAINT PK_HORARIOS PRIMARY KEY (id_tienda_ap,dia_semana),
     CONSTRAINT FK_HORARIOS_TIENDA FOREIGN KEY (id_tienda_ap) REFERENCES TIENDAS (id)
 );
