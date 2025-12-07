@@ -13,35 +13,35 @@ INSERT INTO PAISES (id, nombre, continente, nacionalidad, ue) VALUES (4, 'Poloni
 -- 2. INSERTAR ESTADOS
 -- =============================================
 -- Hong Kong
-INSERT INTO ESTADOS (id_pais, id, nombre) VALUES (1, 1, 'Wan Chai District');
-INSERT INTO ESTADOS (id_pais, id, nombre) VALUES (1, 2, 'Eastern District');
-INSERT INTO ESTADOS (id_pais, id, nombre) VALUES (1, 3, 'Sai Kung District');
+INSERT INTO ESTADOS (id_pais, id_estado, nombre) VALUES (1, 1, 'Wan Chai District');
+INSERT INTO ESTADOS (id_pais, id_estado, nombre) VALUES (1, 2, 'Eastern District');
+INSERT INTO ESTADOS (id_pais, id_estado, nombre) VALUES (1, 3, 'Sai Kung District');
 -- México
-INSERT INTO ESTADOS (id_pais, id, nombre) VALUES (2, 1, 'Aguascalientes');
-INSERT INTO ESTADOS (id_pais, id, nombre) VALUES (2, 2, 'Nuevo León');
+INSERT INTO ESTADOS (id_pais, id_estado, nombre) VALUES (2, 1, 'Aguascalientes');
+INSERT INTO ESTADOS (id_pais, id_estado, nombre) VALUES (2, 2, 'Nuevo León');
 -- Estados Unidos
-INSERT INTO ESTADOS (id_pais, id, nombre) VALUES (3, 1, 'New York');
-INSERT INTO ESTADOS (id_pais, id, nombre) VALUES (3, 2, 'New Jersey');
+INSERT INTO ESTADOS (id_pais, id_estado, nombre) VALUES (3, 1, 'New York');
+INSERT INTO ESTADOS (id_pais, id_estado, nombre) VALUES (3, 2, 'New Jersey');
 -- Polonia
-INSERT INTO ESTADOS (id_pais, id, nombre) VALUES (4, 1, 'Mazowieckie');
-INSERT INTO ESTADOS (id_pais, id, nombre) VALUES (4, 2, 'Slaskie');
+INSERT INTO ESTADOS (id_pais, id_estado, nombre) VALUES (4, 1, 'Mazowieckie');
+INSERT INTO ESTADOS (id_pais, id_estado, nombre) VALUES (4, 2, 'Slaskie');
 -- =============================================
 -- 3. INSERTAR CIUDADES
 -- Estructura similar
 -- =============================================
 -- Hong Kong
-INSERT INTO CIUDADES (id_pais, id_estado, id, nombre) VALUES (1, 1, 1, 'Causeway Bay');
-INSERT INTO CIUDADES (id_pais, id_estado, id, nombre) VALUES (1, 2, 1, 'Taikoo Shing');
-INSERT INTO CIUDADES (id_pais, id_estado, id, nombre) VALUES (1, 3, 1, 'Tseung Kwan O');
+INSERT INTO CIUDADES (id_pais, id_estado, id_ciudad, nombre) VALUES (1, 1, 1, 'Causeway Bay');
+INSERT INTO CIUDADES (id_pais, id_estado, id_ciudad, nombre) VALUES (1, 2, 1, 'Taikoo Shing');
+INSERT INTO CIUDADES (id_pais, id_estado, id_ciudad, nombre) VALUES (1, 3, 1, 'Tseung Kwan O');
 -- México
-INSERT INTO CIUDADES (id_pais, id_estado, id, nombre) VALUES (2, 1, 1, 'Aguascalientes');
-INSERT INTO CIUDADES (id_pais, id_estado, id, nombre) VALUES (2, 2, 1, 'Monterrey');
+INSERT INTO CIUDADES (id_pais, id_estado, id_ciudad, nombre) VALUES (2, 1, 1, 'Aguascalientes');
+INSERT INTO CIUDADES (id_pais, id_estado, id_ciudad, nombre) VALUES (2, 2, 1, 'Monterrey');
 -- Estados Unidos
-INSERT INTO CIUDADES (id_pais, id_estado, id, nombre) VALUES (3, 1, 1, 'New York City');
-INSERT INTO CIUDADES (id_pais, id_estado, id, nombre) VALUES (3, 2, 1, 'Elizabeth');
+INSERT INTO CIUDADES (id_pais, id_estado, id_ciudad, nombre) VALUES (3, 1, 1, 'New York City');
+INSERT INTO CIUDADES (id_pais, id_estado, id_ciudad, nombre) VALUES (3, 2, 1, 'Elizabeth');
 -- Polonia
-INSERT INTO CIUDADES (id_pais, id_estado, id, nombre) VALUES (4, 1, 1, 'Warszawa');
-INSERT INTO CIUDADES (id_pais, id_estado, id, nombre) VALUES (4, 2, 1, 'Katowice');
+INSERT INTO CIUDADES (id_pais, id_estado, id_ciudad, nombre) VALUES (4, 1, 1, 'Warszawa');
+INSERT INTO CIUDADES (id_pais, id_estado, id_ciudad, nombre) VALUES (4, 2, 1, 'Katowice');
 -- =============================================
 -- 4. INSERTAR TIENDAS
 -- =============================================
@@ -61,6 +61,111 @@ INSERT INTO TIENDAS (id, nombre, nro_telefono, direccion, id_pais, id_estado, id
 -- =============================================
 -- 5. INSERTAR PERSONAS (CLIENTES)
 -- =============================================
+INSERT INTO CLIENTES (
+    id_lego, primer_nombre, primer_apellido, segundo_apellido, email, 
+    fecha_nacimiento, id_pais_res, id_pais_nac, segundo_nombre, 
+    doc_identidad, pasaporte, fecha_venc_pasa
+) VALUES (
+    1001, 'Santiago', 'Pérez', 'Gómez', 'santiago.p@mail.com', 
+    TO_DATE('1990-05-15', 'YYYY-MM-DD'), 4, 4, 'Alejandro', 
+    '34521B', NULL, NULL
+);
+INSERT INTO CLIENTES (
+    id_lego, primer_nombre, primer_apellido, segundo_apellido, email, 
+    fecha_nacimiento, id_pais_res, id_pais_nac, segundo_nombre, 
+    doc_identidad, pasaporte, fecha_venc_pasa
+) VALUES (
+    1002, 'Valeria', 'López', 'Díaz', 'valeria.l@mail.com', 
+    TO_DATE('1985-10-20', 'YYYY-MM-DD'), 2, 2, NULL, 
+    NULL, 'P98765', TO_DATE('2030-12-01', 'YYYY-MM-DD')
+);
+INSERT INTO CLIENTES (
+    id_lego, primer_nombre, primer_apellido, segundo_apellido, email, 
+    fecha_nacimiento, id_pais_res, id_pais_nac, segundo_nombre, 
+    doc_identidad, pasaporte, fecha_venc_pasa
+) VALUES (
+    1003, 'Carlos', 'Ruiz', 'Soto', 'carlos.ruiz@mail.com', 
+    TO_DATE('2000-01-10', 'YYYY-MM-DD'), 4, 4, NULL, 
+    '52145M', NULL, NULL
+);
+-- 4. Cliente con Pasaporte (Sin segundo nombre)
+INSERT INTO CLIENTES (
+    id_lego, primer_nombre, primer_apellido, segundo_apellido, email, 
+    fecha_nacimiento, id_pais_res, id_pais_nac, segundo_nombre, 
+    doc_identidad, pasaporte, fecha_venc_pasa
+) VALUES (
+    1004, 'Ana', 'Méndez', 'Vega', 'ana.mendez@mail.com', 
+    TO_DATE('1995-03-30', 'YYYY-MM-DD'), 1, 1, NULL, 
+    NULL, '112174M', TO_DATE('2028-06-15', 'YYYY-MM-DD')
+);
+-- 5. Cliente con DNI
+INSERT INTO CLIENTES (
+    id_lego, primer_nombre, primer_apellido, segundo_apellido, email, 
+    fecha_nacimiento, id_pais_res, id_pais_nac, segundo_nombre, 
+    doc_identidad, pasaporte, fecha_venc_pasa
+) VALUES (
+    1005, 'Luis', 'Hernández', 'Silva', 'luis.h@mail.com', 
+    TO_DATE('1988-08-08', 'YYYY-MM-DD'), 4, 4, 'Eduardo', 
+    '45129P', NULL, NULL
+);
+
+-- 11. Cliente de Hong Kong (01) -> SOLO Pasaporte
+INSERT INTO CLIENTES (
+    id_lego, primer_nombre, primer_apellido, segundo_apellido, email, 
+    fecha_nacimiento, id_pais_res, id_pais_nac, segundo_nombre, 
+    doc_identidad, pasaporte, fecha_venc_pasa
+) VALUES (
+    1011, 'Wei', 'Chen', 'Wong', 'wei.chen@mail.com', 
+    TO_DATE('1990-03-15', 'YYYY-MM-DD'), 1, 1, 'Jun', 
+    NULL, 'HK-987654321', TO_DATE('2030-05-20', 'YYYY-MM-DD')
+);
+
+-- 12. Cliente de Mexico (02) -> SOLO Pasaporte
+INSERT INTO CLIENTES (
+    id_lego, primer_nombre, primer_apellido, segundo_apellido, email, 
+    fecha_nacimiento, id_pais_res, id_pais_nac, segundo_nombre, 
+    doc_identidad, pasaporte, fecha_venc_pasa
+) VALUES (
+    1012, 'Jose', 'Ramirez', 'Castillo', 'jose.ramirez@mail.com', 
+    TO_DATE('1988-11-02', 'YYYY-MM-DD'), 2, 2, 'Luis', 
+    NULL, 'MX-11223344', TO_DATE('2029-12-01', 'YYYY-MM-DD')
+);
+
+-- 13. Cliente de USA (03) -> SOLO Pasaporte
+INSERT INTO CLIENTES (
+    id_lego, primer_nombre, primer_apellido, segundo_apellido, email, 
+    fecha_nacimiento, id_pais_res, id_pais_nac, segundo_nombre, 
+    doc_identidad, pasaporte, fecha_venc_pasa
+) VALUES (
+    1013, 'Emily', 'Johnson', 'Davis', 'emily.jd@mail.com', 
+    TO_DATE('1995-07-04', 'YYYY-MM-DD'), 3, 3, 'Sue', 
+    NULL, 'US-55667788', TO_DATE('2032-01-15', 'YYYY-MM-DD')
+);
+
+-- 14. Cliente de Polonia (04) -> SOLO DNI (doc_identidad)
+-- Regla: Pais 04 usa DNI, pasaporte debe ser NULL
+INSERT INTO CLIENTES (
+    id_lego, primer_nombre, primer_apellido, segundo_apellido, email, 
+    fecha_nacimiento, id_pais_res, id_pais_nac, segundo_nombre, 
+    doc_identidad, pasaporte, fecha_venc_pasa
+) VALUES (
+    1014, 'Jakub', 'Kowalski', 'Nowak', 'jakub.kn@mail.com', 
+    TO_DATE('1992-09-20', 'YYYY-MM-DD'), 4, 4, 'Piotr', 
+    'PL-445566', NULL, NULL
+);
+
+-- 15. Cliente de Mexico (02) -> SOLO Pasaporte
+INSERT INTO CLIENTES (
+    id_lego, primer_nombre, primer_apellido, segundo_apellido, email, 
+    fecha_nacimiento, id_pais_res, id_pais_nac, segundo_nombre, 
+    doc_identidad, pasaporte, fecha_venc_pasa
+) VALUES (
+    1015, 'Maria', 'Fernandez', 'Garcia', 'maria.fer@mail.com', 
+    TO_DATE('1999-02-14', 'YYYY-MM-DD'), 2, 2, 'Elena', 
+    NULL, 'MX-99887766', TO_DATE('2028-08-30', 'YYYY-MM-DD')
+);
+
+
 -- Cliente 1: Andrés De Quintal (Venezuela/Mexico) - Grupo 5
 INSERT INTO CLIENTES (id_lego, primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, email, doc_identidad, fecha_nacimiento, id_pais_res, id_pais_nac, pasaporte, fecha_venc_pasa)
 VALUES (100001, 'Andres', 'David', 'De Quintal', 'Perez', 'andres.dq@mail.com', 'V12345678', TO_DATE('2001-05-15', 'YYYY-MM-DD'), 2, 2, 'P-MX-1001', TO_DATE('2030-01-01', 'YYYY-MM-DD'));
