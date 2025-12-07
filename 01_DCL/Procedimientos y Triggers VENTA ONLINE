@@ -1,0 +1,199 @@
+sp_procesar_venta_online:
+  Lógica Maestra:
+    Verifica si el cliente tiene 500 puntos acumulados.
+    Sí tiene: Marca la factura como "Gratis" (Total = 0 + Envío) y resetea los puntos a 0.
+    No tiene: Calcula el total normal.
+    Inserta la factura (los triggers calculan envío y nuevos puntos).
+
+CREATE OR REPLACE PROCEDURE sp_procesar_venta_online (
+    p_id_cliente      IN NUMBER,
+    p_subtotal_compra IN NUMBER,  -- La suma de los precios de los productos
+    p_regala_producto IN CHAR DEFAULT 'NO' -- Si aplica alguna promo adicional
+) IS
+    v_puntos_actuales NUMBER(10);
+    v_total_base      NUMBER(10, 2);
+    v_es_gratis       CHAR(2);
+    
+    e_cliente_no_existe EXCEPTION;
+    PRAGMA EXCEPTION_INIT(e_cliente_no_existe, -20005); 
+    
+BEGIN
+    -- 1. Obtener los puntos actuales del cliente y bloquear la fila (FOR UPDATE)
+    --    Bloqueamos para evitar que dos transacciones usen los mismos puntos a la vez.
+    BEGIN
+        SELECT puntos_lealtad
+        INTO v_puntos_actuales
+        FROM CLIENTES
+        WHERE id_lego = p_id_cliente
+        FOR UPDATE; -- ¡Crucial para la integridad en concurrencia!
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE_APPLICATION_ERROR(-20005, 'El cliente con ID ' || p_id_cliente || ' no existe.');
+    END;
+
+    -- 2. Lógica Maestra: ¿Es compra gratis?
+    IF v_puntos_actuales >= 500 THEN
+        -- CASO: COMPRA GRATIS
+        v_total_base := 0;      -- El costo de los productos pasa a ser 0
+        v_es_gratis  := 'SI';   -- Marca para auditoría o triggers futuros
+        
+        -- Resetear los puntos del cliente INMEDIATAMENTE
+        UPDATE CLIENTES
+        SET puntos_lealtad = 0
+        WHERE id_lego = p_id_cliente;
+        
+        DBMS_OUTPUT.PUT_LINE('¡Felicidades! Cliente canjeó 500 puntos. Compra de productos GRATIS.');
+        
+    ELSE
+        -- CASO: COMPRA NORMAL
+        v_total_base := p_subtotal_compra;
+        v_es_gratis  := 'NO';
+        -- No tocamos los puntos aquí; el Trigger AFTER INSERT calculará los nuevos puntos ganados.
+    END IF;
+
+    -- 3. Insertar la Factura (Cabecera)
+    --    NOTA: Insertamos el 'v_total_base'. 
+    --    El Trigger 'trg_bi_fact_online_envio' se disparará automátiamente aquí
+    --    y sumará el costo de envío (+5% o +15%) a este total antes de guardar.
+    INSERT INTO FACTURAS_ONLINE (
+        nro_factura,
+        fecha,
+        total,             -- Será 0 o el Subtotal. El trigger le suma el envío.
+        puntos_ganados,    -- Se puede dejar en 0 o NULL, el trigger lo calculará.
+        regala_producto,   
+        id_cliente
+    ) VALUES (
+        seq_factura_online.NEXTVAL, -- Usamos una secuencia para el ID
+        SYSDATE,
+        v_total_base,
+        0,                  -- Inicializamos en 0, el trigger AFTER INSERT lo actualizará si aplica
+        p_regala_producto,
+        p_id_cliente
+    );
+    COMMIT;
+    
+    DBMS_OUTPUT.PUT_LINE('Factura generada exitosamente para el cliente ' || p_id_cliente);
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK; -- Deshacer cambios si algo falla
+        RAISE_APPLICATION_ERROR(-20010, 'error al procesar venta online: ' || SQLERRM);
+END sp_procesar_venta_online;
+/
+
+TRIGGERS
+
+trg_bi_fact_online_envio (Before Insert):
+  Obtiene el país del cliente.
+    Usa fn_es_pais_ue.
+    Aplica recargo: +5% si es UE, +15% si no.
+
+
+CREATE OR REPLACE TRIGGER trg_bi_fact_online_envio
+BEFORE INSERT ON FACTURAS_ONLINE
+FOR EACH ROW
+DECLARE
+    -- Variables locales para almacenar el pais y el calculo
+    v_id_pais_cliente NUMBER;
+    v_monto_envio     NUMBER(10, 2);
+    
+    -- Excepción por si no se encuentra el cliente
+    e_cliente_no_encontrado EXCEPTION;
+    PRAGMA EXCEPTION_INIT(e_cliente_no_encontrado, -20000);
+    
+BEGIN
+    -- 1. Obtener el ID del país de residencia del cliente asociado a la factura
+    --    Usamos :NEW.id_cliente para saber de quién es la factura que entra.
+    BEGIN
+        SELECT id_pais_res
+        INTO v_id_pais_cliente
+        FROM CLIENTES
+        WHERE id_lego = :NEW.id_cliente;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            -- Si el cliente no existe, detenemos la operación para proteger la integridad
+            RAISE_APPLICATION_ERROR(-20000, 'Error Crítico: El cliente ID ' || :NEW.id_cliente || ' no existe en la base de datos.');
+    END;
+
+    -- 2. Calcular el recargo usando la función booleana fn_es_pais_ue
+    --    Regla: +5% si es UE, +15% si es Resto del Mundo.
+    IF fn_es_pais_ue(v_id_pais_cliente) THEN
+        -- Caso Unión Europea (5%)
+        v_monto_envio := :NEW.total * 0.05;
+    ELSE
+        -- Caso Resto del Mundo (15%)
+        v_monto_envio := :NEW.total * 0.15;
+    END IF;
+
+    -- 3. Modificar el valor final del campo TOTAL antes de guardar
+    --    El nuevo total será el subtotal de productos + el envío calculado.
+    :NEW.total := :NEW.total + v_monto_envio;
+    
+    -- Opcional: Si tienes una columna para guardar el costo de envío separado
+    -- :NEW.costo_envio := v_monto_envio; 
+
+EXCEPTION
+    WHEN OTHERS THEN
+        -- Si ocurre cualquier otro error técnico, lo reportamos
+        IF SQLCODE != -20000 THEN
+            RAISE_APPLICATION_ERROR(-20001, 'Error al calcular envío en factura online: ' || SQLERRM);
+        ELSE
+            RAISE; -- Re-lanzar nuestro error personalizado
+        END IF;
+END;
+/
+
+trg_ai_fact_online_puntos (After Insert):
+    Si la factura NO fue gratis (total > 0):
+      Calcula puntos ganados con fn_calcular_puntos.
+      Actualiza el campo puntos_acumulados en la tabla CLIENTES.
+
+CREATE OR REPLACE TRIGGER trg_ai_fact_online_puntos
+AFTER INSERT ON FACTURAS_ONLINE
+FOR EACH ROW
+DECLARE
+    v_puntos_ganados NUMBER;
+BEGIN
+    -- 1. Verificar si la factura NO fue gratis (Total > 0)
+    --    Si el total es 0, significa que fue canjeada por puntos, por lo que no genera nuevos puntos.
+    IF :NEW.total > 0 THEN
+    
+        -- 2. Calcular los puntos ganados usando la función externa
+        --    Se pasa el monto total de la factura para determinar el rango (A, B, C, D)
+        v_puntos_ganados := fn_calcular_puntos(:NEW.total);
+        
+        -- 3. Actualizar el acumulado del cliente
+        --    Usamos NVL para asegurar que si el campo estaba vacío, empiece en 0.
+        UPDATE CLIENTES
+        SET puntos_lealtad = NVL(puntos_lealtad, 0) + v_puntos_ganados
+        WHERE id_lego = :NEW.id_cliente;
+        
+    END IF;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE_APPLICATION_ERROR(-20002, 'Error al actualizar puntos de lealtad: ' || SQLERRM);
+END;
+/
+
+trg_bud_fact_online_proteger (Before Update/Delete): 
+  Protege la integridad histórica de la venta online.
+
+CREATE OR REPLACE TRIGGER trg_bud_fact_online_proteger
+BEFORE UPDATE OR DELETE ON FACTURAS_ONLINE
+FOR EACH ROW
+BEGIN
+    -- 1. Bloquear intentos de Eliminación
+    IF DELETING THEN
+        RAISE_APPLICATION_ERROR(-20005, 'ACCION DENEGADA: Está terminantemente prohibido ELIMINAR facturas registradas.');
+    
+    -- 2. Bloquear intentos de Modificación (Actualización)
+    ELSIF UPDATING THEN
+        RAISE_APPLICATION_ERROR(-20006, 'ACCION DENEGADA: Las facturas son documentos inmutables. No se permite MODIFICAR ningún dato de una factura ya procesada.');
+    END IF;
+
+END;
+/
+
+
+
