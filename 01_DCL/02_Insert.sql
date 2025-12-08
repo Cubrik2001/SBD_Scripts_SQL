@@ -250,6 +250,32 @@ INSERT INTO JUGUETES_LEGO (id, nombre, descripcion, rango_edad, rango_precio, j_
 VALUES (15, 'Super Sonic vs. Egg Drillster', 'Batalla contra el taladro de Eggman', '7 A 8', 'B', 'S', NULL, 'instrucciones/76999.pdf', 590);
 INSERT INTO JUGUETES_LEGO (id, nombre, descripcion, rango_edad, rango_precio, j_set, set_detalle, instrucciones, nro_piezas) 
 VALUES (16, 'Cyclone vs. Metal Sonic', 'Avion tornado contra Metal Sonic', '7 A 8', 'A', 'S', NULL, 'instrucciones/77002.pdf', 250);
+
+-- =============================================
+-- 7.1 INSERTAR TEMAS
+-- =============================================
+
+-- 1. Tema Principal: LEGO Ideas (Para los sets como 'Home Alone' o 'Grand Piano')
+INSERT INTO TEMAS (id, nombre, descripcion, tipo, id_tema_principal) 
+VALUES (10, 'Ideas', 'Sets inspirados en propuestas de fans', 'T', NULL);
+
+-- 2. Tema Principal: Jurassic World (Para los sets de dinosaurios)
+INSERT INTO TEMAS (id, nombre, descripcion, tipo, id_tema_principal) 
+VALUES (20, 'Jurassic World', 'Dinosaurios y aventuras del parque jurasico', 'T', NULL);
+
+-- 3. SERIE: Camp Cretaceous (Sub-tema de Jurassic World) -> CUMPLE TU REQUISITO DE 'SERIE'
+-- Notar que 'id_tema_principal' apunta al ID 20 (Jurassic World)
+INSERT INTO TEMAS (id, nombre, descripcion, tipo, id_tema_principal) 
+VALUES (21, 'Camp Cretaceous', 'Serie animada basada en eventos de la isla', 'S', 20);
+
+-- 4. Tema Principal: Sonic (Para los sets de Sonic)
+INSERT INTO TEMAS (id, nombre, descripcion, tipo, id_tema_principal) 
+VALUES (30, 'Sonic', 'Sets de velocidad y aventuras del erizo azul', 'T', NULL);
+
+-- 5. Tema Principal: Technic (Para probar otra categoría independiente)
+INSERT INTO TEMAS (id, nombre, descripcion, tipo, id_tema_principal) 
+VALUES (40, 'Technic', 'Modelos avanzados con engranajes y funciones', 'T', NULL);
+
 -- =============================================
 -- 8. INSERTAR CATALOGO_PAISES
 -- CORRECCIÓN: Columna 'id_juguete_lego' en vez de 'id_juguete'
