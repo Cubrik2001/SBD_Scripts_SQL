@@ -1,199 +1,293 @@
-sp_procesar_venta_online:
-  Lógica Maestra:
-    Verifica si el cliente tiene 500 puntos acumulados.
-    Sí tiene: Marca la factura como "Gratis" (Total = 0 + Envío) y resetea los puntos a 0.
-    No tiene: Calcula el total normal.
-    Inserta la factura (los triggers calculan envío y nuevos puntos).
+PASO A PASO DE QUE HAY QUE IMPLEMENTAR Y ARRREGLAR PARA QUE FUNCIONE BIEN EL MODULO DE VENTAS ONLINE 
 
-CREATE OR REPLACE PROCEDURE sp_procesar_venta_online (
-    p_id_cliente      IN NUMBER,
-    p_subtotal_compra IN NUMBER,  -- La suma de los precios de los productos
-    p_regala_producto IN CHAR DEFAULT 'NO' -- Si aplica alguna promo adicional
-) IS
-    v_puntos_actuales NUMBER(10);
-    v_total_base      NUMBER(10, 2);
-    v_es_gratis       CHAR(2);
-    
-    e_cliente_no_existe EXCEPTION;
-    PRAGMA EXCEPTION_INIT(e_cliente_no_existe, -20005); 
-    
-BEGIN
-    -- 1. Obtener los puntos actuales del cliente y bloquear la fila (FOR UPDATE)
-    --    Bloqueamos para evitar que dos transacciones usen los mismos puntos a la vez.
-    BEGIN
-        SELECT puntos_lealtad
-        INTO v_puntos_actuales
-        FROM CLIENTES
-        WHERE id_lego = p_id_cliente
-        FOR UPDATE; -- ¡Crucial para la integridad en concurrencia!
-    EXCEPTION
-        WHEN NO_DATA_FOUND THEN
-            RAISE_APPLICATION_ERROR(-20005, 'El cliente con ID ' || p_id_cliente || ' no existe.');
-    END;
-
-    -- 2. Lógica Maestra: ¿Es compra gratis?
-    IF v_puntos_actuales >= 500 THEN
-        -- CASO: COMPRA GRATIS
-        v_total_base := 0;      -- El costo de los productos pasa a ser 0
-        v_es_gratis  := 'SI';   -- Marca para auditoría o triggers futuros
-        
-        -- Resetear los puntos del cliente INMEDIATAMENTE
-        UPDATE CLIENTES
-        SET puntos_lealtad = 0
-        WHERE id_lego = p_id_cliente;
-        
-        DBMS_OUTPUT.PUT_LINE('¡Felicidades! Cliente canjeó 500 puntos. Compra de productos GRATIS.');
-        
-    ELSE
-        -- CASO: COMPRA NORMAL
-        v_total_base := p_subtotal_compra;
-        v_es_gratis  := 'NO';
-        -- No tocamos los puntos aquí; el Trigger AFTER INSERT calculará los nuevos puntos ganados.
-    END IF;
-
-    -- 3. Insertar la Factura (Cabecera)
-    --    NOTA: Insertamos el 'v_total_base'. 
-    --    El Trigger 'trg_bi_fact_online_envio' se disparará automátiamente aquí
-    --    y sumará el costo de envío (+5% o +15%) a este total antes de guardar.
-    INSERT INTO FACTURAS_ONLINE (
-        nro_factura,
-        fecha,
-        total,             -- Será 0 o el Subtotal. El trigger le suma el envío.
-        puntos_ganados,    -- Se puede dejar en 0 o NULL, el trigger lo calculará.
-        regala_producto,   
-        id_cliente
-    ) VALUES (
-        seq_factura_online.NEXTVAL, -- Usamos una secuencia para el ID
-        SYSDATE,
-        v_total_base,
-        0,                  -- Inicializamos en 0, el trigger AFTER INSERT lo actualizará si aplica
-        p_regala_producto,
-        p_id_cliente
-    );
-    COMMIT;
-    
-    DBMS_OUTPUT.PUT_LINE('Factura generada exitosamente para el cliente ' || p_id_cliente);
-
-EXCEPTION
-    WHEN OTHERS THEN
-        ROLLBACK; -- Deshacer cambios si algo falla
-        RAISE_APPLICATION_ERROR(-20010, 'error al procesar venta online: ' || SQLERRM);
-END sp_procesar_venta_online;
+-- 1. TIPOS DE COLECCIÓN (Para enviar el carrito de compras al PL/SQL)
+CREATE OR REPLACE TYPE t_detalle_compra_obj AS OBJECT (
+    id_juguete   NUMBER, -- ID del producto (JUGUETES_LEGO.id)
+    cantidad     NUMBER
+);
 /
 
-TRIGGERS
+CREATE OR REPLACE TYPE t_productos_compra AS TABLE OF t_detalle_compra_obj;
+/
 
-trg_bi_fact_online_envio (Before Insert):
-  Obtiene el país del cliente.
-    Usa fn_es_pais_ue.
-    Aplica recargo: +5% si es UE, +15% si no.
+-- 2. AJUSTE DE COLUMNAS EXISTENTES (Si no se hizo correctamente antes)
+--    Aumentar la precisión de TOTAL (solución a ORA-01438)
+ALTER TABLE FACTURAS_ONLINE
+MODIFY total NUMBER(10, 2);
+
+-- 3. VALIDACIÓN DE CLAVE FORÁNEA EN DETALLE (Necesario para descontar stock)
+--    Asegura que DET_FACTURAS_ONLINE.id_juguete_cat apunte a JUGUETES_LEGO.id.
+--    (Asume que la tabla DET_FACTURAS_ONLINE ya existe.)
+ALTER TABLE DET_FACTURAS_ONLINE 
+    ADD CONSTRAINT FK_DET_ONLINE_JUGUETE 
+    FOREIGN KEY (id_juguete_cat) REFERENCES JUGUETES_LEGO(id);
+
+Propósito: Le enseña a Oracle a entender la estructura de un "Carrito de Compras" completo.
+
+1. t_detalle_compra_obj (El Objeto)
+Función: Define la estructura de una sola línea del carrito. Es decir, le dice a Oracle que una línea de compra es una combinación de un id_juguete y su cantidad.
+
+Analogía: Es como definir una "fila" de una hoja de Excel.
+
+2. t_productos_compra (La Colección)
+Función: Define una "Tabla" (o lista) compuesta por muchos objetos t_detalle_compra_obj.
+
+Analogía: Es la hoja de Excel completa, que contiene múltiples filas.
+
+PARTE 2 
+
+-- FUNCIÓN 1: CALCULAR EDAD (Necesario para la regla +21)
+CREATE OR REPLACE FUNCTION edad(p_fecha DATE) RETURN NUMBER IS
+BEGIN
+    RETURN TRUNC(MONTHS_BETWEEN(SYSDATE, p_fecha) / 12);
+END;
+/
+
+-- FUNCIÓN 2: VERIFICAR UNIÓN EUROPEA (Para el cálculo de envío)
+CREATE OR REPLACE FUNCTION fn_es_pais_ue (p_id_pais IN NUMBER) RETURN CHAR IS
+    v_es_ue CHAR(1);
+BEGIN
+    SELECT ue INTO v_es_ue
+    FROM PAISES
+    WHERE id = p_id_pais;
+    RETURN v_es_ue;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN RETURN 'N';
+END fn_es_pais_ue;
+/
+
+-- FUNCIÓN 3: PUNTOS GANADOS (Define la recompensa por la compra actual)
+CREATE OR REPLACE FUNCTION fn_calcular_puntos_ganados (p_total IN NUMBER) RETURN NUMBER IS
+BEGIN
+    IF p_total >= 500 THEN RETURN 50;
+    ELSIF p_total >= 300 THEN RETURN 30;
+    ELSIF p_total >= 100 THEN RETURN 10;
+    ELSE RETURN 5;
+    END IF;
+END;
+/
+
+-- FUNCIÓN 4: CÁLCULO DE SALDO DISPONIBLE (Event Sourcing - Core Logic)
+--            Calcula los puntos que el cliente puede canjear, leyendo el historial.
+CREATE OR REPLACE FUNCTION fn_calcular_puntos_disponibles (
+    p_id_cliente IN NUMBER
+) RETURN NUMBER IS
+    v_ultimo_reinicio NUMBER;
+    v_total_puntos    NUMBER;
+BEGIN
+    -- Busca el ID de la última factura donde el cliente canjeó puntos
+    SELECT NVL(MAX(numero_venta), 0)
+    INTO v_ultimo_reinicio
+    FROM FACTURAS_ONLINE
+    WHERE id_lego_cliente = p_id_cliente
+      AND gratis = 'S';
+
+    -- Suma los puntos ganados SOLAMENTE desde esa última factura de canje
+    SELECT NVL(SUM(puntos_generados), 0)
+    INTO v_total_puntos
+    FROM FACTURAS_ONLINE
+    WHERE id_lego_cliente = p_id_cliente
+      AND numero_venta > v_ultimo_reinicio;
+
+    RETURN v_total_puntos;
+END;
+/
 
 
+
+PARTE 3
+
+-- TRIGGER 1: CALCULAR ENVÍO (Suma 5% o 15% al TOTAL antes de guardarse)
 CREATE OR REPLACE TRIGGER trg_bi_fact_online_envio
 BEFORE INSERT ON FACTURAS_ONLINE
 FOR EACH ROW
 DECLARE
-    -- Variables locales para almacenar el pais y el calculo
     v_id_pais_cliente NUMBER;
     v_monto_envio     NUMBER(10, 2);
-    
-    -- Excepción por si no se encuentra el cliente
-    e_cliente_no_encontrado EXCEPTION;
-    PRAGMA EXCEPTION_INIT(e_cliente_no_encontrado, -20000);
-    
 BEGIN
-    -- 1. Obtener el ID del país de residencia del cliente asociado a la factura
-    --    Usamos :NEW.id_cliente para saber de quién es la factura que entra.
-    BEGIN
-        SELECT id_pais_res
-        INTO v_id_pais_cliente
-        FROM CLIENTES
-        WHERE id_lego = :NEW.id_cliente;
-    EXCEPTION
-        WHEN NO_DATA_FOUND THEN
-            -- Si el cliente no existe, detenemos la operación para proteger la integridad
-            RAISE_APPLICATION_ERROR(-20000, 'Error Crítico: El cliente ID ' || :NEW.id_cliente || ' no existe en la base de datos.');
-    END;
-
-    -- 2. Calcular el recargo usando la función booleana fn_es_pais_ue
-    --    Regla: +5% si es UE, +15% si es Resto del Mundo.
-    IF fn_es_pais_ue(v_id_pais_cliente) THEN
-        -- Caso Unión Europea (5%)
-        v_monto_envio := :NEW.total * 0.05;
-    ELSE
-        -- Caso Resto del Mundo (15%)
-        v_monto_envio := :NEW.total * 0.15;
+    -- Si es canje (Total 0), no sumamos envío.
+    IF :NEW.total = 0 THEN
+        RETURN; 
     END IF;
 
-    -- 3. Modificar el valor final del campo TOTAL antes de guardar
-    --    El nuevo total será el subtotal de productos + el envío calculado.
+    -- Obtener el país de residencia del cliente
+    SELECT id_pais_res INTO v_id_pais_cliente
+    FROM CLIENTES WHERE id_lego = :NEW.id_lego_cliente;
+
+    -- Calcular Recargo
+    IF fn_es_pais_ue(v_id_pais_cliente) = 'S' THEN
+        v_monto_envio := :NEW.total * 0.05; -- 5% (Unión Europea)
+    ELSE
+        v_monto_envio := :NEW.total * 0.15; -- 15% (Resto del Mundo)
+    END IF;
+
+    -- Actualizar el campo TOTAL
     :NEW.total := :NEW.total + v_monto_envio;
     
-    -- Opcional: Si tienes una columna para guardar el costo de envío separado
-    -- :NEW.costo_envio := v_monto_envio; 
-
 EXCEPTION
     WHEN OTHERS THEN
-        -- Si ocurre cualquier otro error técnico, lo reportamos
-        IF SQLCODE != -20000 THEN
-            RAISE_APPLICATION_ERROR(-20001, 'Error al calcular envío en factura online: ' || SQLERRM);
-        ELSE
-            RAISE; -- Re-lanzar nuestro error personalizado
-        END IF;
+        RAISE_APPLICATION_ERROR(-20001, 'Error al calcular envío: ' || SQLERRM);
 END;
 /
 
-trg_ai_fact_online_puntos (After Insert):
-    Si la factura NO fue gratis (total > 0):
-      Calcula puntos ganados con fn_calcular_puntos.
-      Actualiza el campo puntos_acumulados en la tabla CLIENTES.
-
-CREATE OR REPLACE TRIGGER trg_ai_fact_online_puntos
-AFTER INSERT ON FACTURAS_ONLINE
+-- TRIGGER 2: DESCONTAR INVENTARIO (Dinámico por País)
+--            Descuenta el stock del lote 101 de la tienda principal del país del cliente.
+CREATE OR REPLACE TRIGGER trg_ai_online_descontar_stock
+AFTER INSERT ON DET_FACTURAS_ONLINE
 FOR EACH ROW
 DECLARE
-    v_puntos_ganados NUMBER;
+    v_id_cliente     NUMBER;
+    v_id_pais        NUMBER;
+    v_target_tienda  NUMBER;
 BEGIN
-    -- 1. Verificar si la factura NO fue gratis (Total > 0)
-    --    Si el total es 0, significa que fue canjeada por puntos, por lo que no genera nuevos puntos.
-    IF :NEW.total > 0 THEN
-    
-        -- 2. Calcular los puntos ganados usando la función externa
-        --    Se pasa el monto total de la factura para determinar el rango (A, B, C, D)
-        v_puntos_ganados := fn_calcular_puntos(:NEW.total);
-        
-        -- 3. Actualizar el acumulado del cliente
-        --    Usamos NVL para asegurar que si el campo estaba vacío, empiece en 0.
-        UPDATE CLIENTES
-        SET puntos_lealtad = NVL(puntos_lealtad, 0) + v_puntos_ganados
-        WHERE id_lego = :NEW.id_cliente;
-        
-    END IF;
+    -- Obtener País de Residencia del Cliente
+    SELECT f.id_lego_cliente, c.id_pais_res
+    INTO v_id_cliente, v_id_pais
+    FROM FACTURAS_ONLINE f
+    JOIN CLIENTES c ON f.id_lego_cliente = c.id_lego
+    WHERE f.numero_venta = :NEW.numero_venta;
 
-EXCEPTION
-    WHEN OTHERS THEN
-        RAISE_APPLICATION_ERROR(-20002, 'Error al actualizar puntos de lealtad: ' || SQLERRM);
+    -- Mapear País a Tienda Principal (Lógica Dinámica)
+    v_target_tienda := CASE v_id_pais
+                        WHEN 1 THEN 1  -- Hong Kong
+                        WHEN 2 THEN 4  -- México
+                        WHEN 3 THEN 6  -- Estados Unidos
+                        WHEN 4 THEN 8  -- Polonia
+                        ELSE 6         -- Default a USA
+                       END;
+      
+    -- Descontar del lote principal (101) de la tienda objetivo
+    UPDATE LOTES_INVENTARIO
+    SET cantidad = cantidad - :NEW.cantidad
+    WHERE id_tienda  = v_target_tienda
+      AND id_juguete = :NEW.id_juguete_cat
+      AND id_lote    = 101;
+      
+    -- Validación
+    IF SQL%ROWCOUNT = 0 THEN
+        RAISE_APPLICATION_ERROR(-20025, 'Error de stock: No se pudo descontar el stock del Lote 101 en la Tienda ' || v_target_tienda);
+    END IF;
 END;
 /
 
-trg_bud_fact_online_proteger (Before Update/Delete): 
-  Protege la integridad histórica de la venta online.
-
+-- TRIGGER 3: PROTECCIÓN DE DATOS (Facturas Inmutables)
 CREATE OR REPLACE TRIGGER trg_bud_fact_online_proteger
 BEFORE UPDATE OR DELETE ON FACTURAS_ONLINE
 FOR EACH ROW
 BEGIN
-    -- 1. Bloquear intentos de Eliminación
     IF DELETING THEN
-        RAISE_APPLICATION_ERROR(-20005, 'ACCION DENEGADA: Está terminantemente prohibido ELIMINAR facturas registradas.');
-    
-    -- 2. Bloquear intentos de Modificación (Actualización)
+        RAISE_APPLICATION_ERROR(-20005, 'ACCION DENEGADA: Prohibido eliminar facturas.');
     ELSIF UPDATING THEN
-        RAISE_APPLICATION_ERROR(-20006, 'ACCION DENEGADA: Las facturas son documentos inmutables. No se permite MODIFICAR ningún dato de una factura ya procesada.');
+        RAISE_APPLICATION_ERROR(-20006, 'ACCION DENEGADA: Las facturas son inmutables.');
     END IF;
-
 END;
 /
 
+
+PARTE 4 
+
+CREATE OR REPLACE PROCEDURE sp_procesar_venta_online (
+    p_id_cliente      IN CLIENTES.id_lego%TYPE,
+    p_productos_carrito IN t_productos_compra
+) IS
+    v_puntos_actuales   NUMBER;
+    v_es_gratis         CHAR(1);
+    v_puntos_venta      NUMBER;
+    v_subtotal_calculado NUMBER(10, 2) := 0;
+    v_next_numero_venta FACTURAS_ONLINE.numero_venta%TYPE;
+    
+    v_precio_unitario   HIST_PRECIOS.precio%TYPE;
+    v_stock_disponible  JUGUETES_LEGO.nro_piezas%TYPE;
+    v_edad_cliente      NUMBER(3);
+    v_id_pais_cliente   PAISES.id%TYPE;
+    
+    -- Excepciones Personalizadas
+    e_edad_no_cumplida EXCEPTION;
+    PRAGMA EXCEPTION_INIT(e_edad_no_cumplida, -20021);
+    e_stock_insuficiente EXCEPTION;
+    PRAGMA EXCEPTION_INIT(e_stock_insuficiente, -20020);
+    e_cliente_no_encontrado EXCEPTION;
+    PRAGMA EXCEPTION_INIT(e_cliente_no_encontrado, -20013);
+    
+BEGIN
+    -- 1. VALIDAR EDAD (+21)
+    BEGIN
+        SELECT edad(fecha_nacimiento), id_pais_res
+        INTO v_edad_cliente, v_id_pais_cliente
+        FROM CLIENTES WHERE id_lego = p_id_cliente;
+        
+        IF v_edad_cliente < 21 THEN
+            RAISE_APPLICATION_ERROR(-20021, 'COMPRA DENEGADA: El titular debe ser mayor de 21 años para compras online.');
+        END IF;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN RAISE_APPLICATION_ERROR(-20013, 'Cliente no encontrado.');
+    END;
+
+    -- 2. BLOQUEAR INVENTARIO Y CALCULAR SUBTOTAL
+    FOR i IN 1 .. p_productos_carrito.COUNT LOOP
+        
+        SELECT p.precio, j.nro_piezas
+        INTO v_precio_unitario, v_stock_disponible
+        FROM JUGUETES_LEGO j
+        JOIN HIST_PRECIOS p ON j.id = p.id_juguete
+        WHERE j.id = p_productos_carrito(i).id_juguete
+          AND p.fecha_fin IS NULL
+        FOR UPDATE OF j.nro_piezas NOWAIT;
+        
+        IF v_stock_disponible < p_productos_carrito(i).cantidad THEN
+            RAISE_APPLICATION_ERROR(-20020, 'Stock insuficiente para juguete ID: ' || p_productos_carrito(i).id_juguete);
+        END IF;
+        
+        v_subtotal_calculado := v_subtotal_calculado + (p_productos_carrito(i).cantidad * v_precio_unitario);
+    END LOOP;
+    
+    -- 3. LÓGICA DE CANJE (Event Sourcing)
+    v_puntos_actuales := fn_calcular_puntos_disponibles(p_id_cliente);
+
+    IF v_puntos_actuales >= 500 THEN
+        v_es_gratis    := 'S';
+        v_puntos_venta := 0; 
+        v_subtotal_calculado := 0;
+    ELSE
+        v_es_gratis    := 'N';
+        v_puntos_venta := fn_calcular_puntos_ganados(v_subtotal_calculado);
+    END IF;
+
+    -- 4. GUARDAR CABECERA (El trigger de envío se dispara aquí)
+    SELECT seq_factura_online.NEXTVAL INTO v_next_numero_venta FROM DUAL;
+    
+    INSERT INTO FACTURAS_ONLINE (
+        numero_venta, fecha_venta, total, puntos_generados, id_lego_cliente, gratis 
+    ) VALUES (
+        v_next_numero_venta, SYSDATE, v_subtotal_calculado, v_puntos_venta, p_id_cliente, v_es_gratis
+    );
+
+    -- 5. INSERTAR DETALLES Y DESCONTAR INVENTARIO
+    FOR i IN 1 .. p_productos_carrito.COUNT LOOP
+        
+        SELECT p.precio INTO v_precio_unitario
+        FROM HIST_PRECIOS p
+        WHERE p.id_juguete = p_productos_carrito(i).id_juguete AND p.fecha_fin IS NULL;
+        
+        INSERT INTO DET_FACTURAS_ONLINE (
+            numero_venta, id, cantidad, tipo_cliente, id_juguete_cat, id_pais_cat, precio_unitario
+        ) VALUES (
+            v_next_numero_venta, i, p_productos_carrito(i).cantidad, 'A', 
+            p_productos_carrito(i).id_juguete, v_id_pais_cliente, 
+            v_precio_unitario
+        );
+        -- El stock se descuenta automáticamente por el Trigger AFTE INSERT en DET_FACTURAS_ONLINE
+        
+    END LOOP;
+    
+    COMMIT;
+    DBMS_OUTPUT.PUT_LINE('Venta Online (' || v_next_numero_venta || ') registrada con éxito.');
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20015, 'Error Venta Online: ' || SQLERRM);
+END sp_procesar_venta_online;
+/
 
 
