@@ -1,0 +1,538 @@
+sp_registrar_inscripcion_tour:
+  Lógica Maestra:
+    Recibe datos del cliente y lista de participantes.
+    Busca o registra al cliente si es nuevo.
+    Valida capacidad del tour.
+    Inserta en INSCRIPCIONES.
+    Inserta en INSCRITOS (validando cupos mediante triggers).
+    Genera las ENTRADAS automáticamente.
+
+-- ==========================================
+-- TIPOS DE DATOS PARA PARTICIPANTES
+-- ==========================================
+CREATE OR REPLACE TYPE t_participante AS OBJECT (
+    es_cliente          CHAR(1),           -- 'S' si es cliente, 'N' si es visitante
+    id_persona          NUMBER(6),         -- ID del cliente o visitante (si ya existe)
+    id_representante    NUMBER(6),         -- ID del representante (para menores)
+    tipo_cliente        VARCHAR2(1),       -- 'A' para ADULTO, 'N' para NINO
+    -- Datos para crear nuevo cliente (si es necesario)
+    primer_nombre       VARCHAR2(20),
+    primer_apellido     VARCHAR2(20),
+    segundo_apellido    VARCHAR2(20),
+    segundo_nombre      VARCHAR2(20),
+    email               VARCHAR2(30),
+    fecha_nacimiento    DATE,
+    id_pais_res         NUMBER(3),
+    id_pais_nac         NUMBER(3),
+    doc_identidad       VARCHAR2(10),
+    pasaporte           VARCHAR2(16),
+    fecha_venc_pasa     DATE,
+    -- Datos para crear nuevo visitante (si es necesario)
+    pasaporte_visitante VARCHAR2(10)
+);
+/
+
+CREATE OR REPLACE TYPE t_lista_participantes AS TABLE OF t_participante;
+/
+
+-- ==========================================
+-- PROCEDIMIENTO PRINCIPAL
+-- ==========================================
+CREATE OR REPLACE PROCEDURE sp_registrar_inscripcion_tour (
+    p_fecha_tour        IN DATE,
+    -- Datos del cliente titular (o ID si ya existe)
+    p_id_cliente_titular IN NUMBER DEFAULT NULL,
+    p_primer_nombre_cli  IN VARCHAR2 DEFAULT NULL,
+    p_primer_apellido_cli IN VARCHAR2 DEFAULT NULL,
+    p_segundo_apellido_cli IN VARCHAR2 DEFAULT NULL,
+    p_email_cli          IN VARCHAR2 DEFAULT NULL,
+    p_fecha_nac_cli      IN DATE DEFAULT NULL,
+    p_id_pais_res_cli    IN NUMBER DEFAULT NULL,
+    p_id_pais_nac_cli    IN NUMBER DEFAULT NULL,
+    p_segundo_nombre_cli  IN VARCHAR2 DEFAULT NULL,
+    p_doc_identidad_cli   IN VARCHAR2 DEFAULT NULL,
+    p_pasaporte_cli       IN VARCHAR2 DEFAULT NULL,
+    p_fecha_venc_pasa_cli IN DATE DEFAULT NULL,
+    -- Lista de participantes
+    p_participantes       IN t_lista_participantes
+) IS
+    v_id_cliente_final   NUMBER(6);
+    v_precio_por_persona NUMBER(10, 2);
+    v_capacidad_maxima   NUMBER(2);
+    v_participantes_actuales NUMBER(3);
+    v_cantidad_nuevos    NUMBER(3);
+    v_costo_total        NUMBER(10, 2);
+    v_nro_inscripcion    NUMBER(6);
+    v_id_participante    NUMBER(4);
+    v_id_entrada         NUMBER(6);
+    v_edad_participante  NUMBER(3);
+    v_es_menor           BOOLEAN;
+    v_representante_en_lista BOOLEAN;
+    
+    -- Excepciones personalizadas
+    e_tour_no_existe     EXCEPTION;
+    e_sin_cupo           EXCEPTION;
+    e_cliente_requerido  EXCEPTION;
+    e_participante_invalido EXCEPTION;
+    
+    PRAGMA EXCEPTION_INIT(e_tour_no_existe, -20100);
+    PRAGMA EXCEPTION_INIT(e_sin_cupo, -20101);
+    PRAGMA EXCEPTION_INIT(e_cliente_requerido, -20102);
+    PRAGMA EXCEPTION_INIT(e_participante_invalido, -20103);
+    
+BEGIN
+    -- =========================================================
+    -- PASO 1: Validar que el tour existe y obtener información
+    -- =========================================================
+    BEGIN
+        SELECT precio_por_persona, capacidad_maxima
+        INTO v_precio_por_persona, v_capacidad_maxima
+        FROM TOURS
+        WHERE fecha_inicio = p_fecha_tour;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE_APPLICATION_ERROR(-20100, 'Error: El tour con fecha ' || TO_CHAR(p_fecha_tour, 'DD/MM/YYYY') || ' no existe.');
+    END;
+    
+    -- =========================================================
+    -- PASO 2: Buscar o crear el cliente titular
+    -- =========================================================
+    IF p_id_cliente_titular IS NOT NULL THEN
+        -- Verificar que el cliente existe
+        BEGIN
+            SELECT id_lego
+            INTO v_id_cliente_final
+            FROM CLIENTES
+            WHERE id_lego = p_id_cliente_titular;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                RAISE_APPLICATION_ERROR(-20102, 'Error: El cliente con ID ' || p_id_cliente_titular || ' no existe.');
+        END;
+    ELSE
+        -- Crear nuevo cliente (necesitamos todos los datos)
+        IF p_primer_nombre_cli IS NULL OR p_email_cli IS NULL OR p_fecha_nac_cli IS NULL THEN
+            RAISE_APPLICATION_ERROR(-20102, 'Error: Se requieren datos completos del cliente para crear uno nuevo.');
+        END IF;
+        
+        -- Generar ID para el nuevo cliente
+        -- Nota: En producción, usar una secuencia. Aquí asumimos que se pasa o se genera.
+        SELECT NVL(MAX(id_lego), 0) + 1
+        INTO v_id_cliente_final
+        FROM CLIENTES;
+        
+        INSERT INTO CLIENTES (
+            id_lego, primer_nombre, primer_apellido, segundo_apellido,
+            email, fecha_nacimiento, id_pais_res, id_pais_nac,
+            segundo_nombre, doc_identidad, pasaporte, fecha_venc_pasa
+        ) VALUES (
+            v_id_cliente_final, p_primer_nombre_cli, p_primer_apellido_cli, p_segundo_apellido_cli,
+            p_email_cli, p_fecha_nac_cli, p_id_pais_res_cli, p_id_pais_nac_cli,
+            p_segundo_nombre_cli, p_doc_identidad_cli, p_pasaporte_cli, p_fecha_venc_pasa_cli
+        );
+        
+        DBMS_OUTPUT.PUT_LINE('Cliente nuevo creado con ID: ' || v_id_cliente_final);
+    END IF;
+    
+    -- =========================================================
+    -- PASO 3: Validar capacidad del tour
+    -- =========================================================
+    -- Contar participantes actuales en el tour
+    SELECT NVL(COUNT(*), 0)
+    INTO v_participantes_actuales
+    FROM INSCRITOS
+    WHERE fecha_tour_inscrito = p_fecha_tour;
+    
+    -- Contar nuevos participantes
+    v_cantidad_nuevos := p_participantes.COUNT;
+    
+    -- Validar que hay cupo disponible
+    IF (v_participantes_actuales + v_cantidad_nuevos) > v_capacidad_maxima THEN
+        RAISE_APPLICATION_ERROR(-20101, 
+            'Error: No hay cupo disponible. Capacidad máxima: ' || v_capacidad_maxima || 
+            ', Participantes actuales: ' || v_participantes_actuales || 
+            ', Nuevos participantes: ' || v_cantidad_nuevos);
+    END IF;
+    
+    -- =========================================================
+    -- PASO 4: Calcular costo total y generar número de inscripción
+    -- =========================================================
+    v_costo_total := v_precio_por_persona * v_cantidad_nuevos;
+    
+    -- Generar número de inscripción (secuencial por tour)
+    SELECT NVL(MAX(numero), 0) + 1
+    INTO v_nro_inscripcion
+    FROM INSCRIPCIONES
+    WHERE fecha_tour = p_fecha_tour;
+    
+    -- =========================================================
+    -- PASO 5: Insertar la inscripción
+    -- =========================================================
+    INSERT INTO INSCRIPCIONES (
+        fecha_tour, numero, fecha, costo_total, status
+    ) VALUES (
+        p_fecha_tour, v_nro_inscripcion, SYSDATE, v_costo_total, 'ACTIVA'
+    );
+    
+    -- =========================================================
+    -- PASO 6: Validar y ordenar participantes
+    --         Los representantes deben insertarse antes que los menores
+    -- =========================================================
+    -- Validar que todos los representantes estén en la lista
+    FOR i IN 1 .. p_participantes.COUNT LOOP
+        IF p_participantes(i).es_cliente = 'N' AND p_participantes(i).id_representante IS NOT NULL THEN
+            -- Es un visitante con representante, verificar que el representante esté en la lista
+            v_representante_en_lista := FALSE;
+            FOR j IN 1 .. p_participantes.COUNT LOOP
+                IF (p_participantes(j).es_cliente = 'S' AND p_participantes(j).id_persona = p_participantes(i).id_representante) OR
+                   (p_participantes(j).es_cliente = 'S' AND p_participantes(j).id_persona IS NULL AND 
+                    p_participantes(j).email = (SELECT email FROM CLIENTES WHERE id_lego = p_participantes(i).id_representante)) THEN
+                    v_representante_en_lista := TRUE;
+                    EXIT;
+                END IF;
+            END LOOP;
+            
+            IF NOT v_representante_en_lista THEN
+                RAISE_APPLICATION_ERROR(-20103, 
+                    'Error: El representante del participante ' || i || 
+                    ' (ID: ' || p_participantes(i).id_representante || 
+                    ') debe estar incluido en la lista de participantes.');
+            END IF;
+        END IF;
+    END LOOP;
+    
+    -- =========================================================
+    -- PASO 7: Procesar cada participante
+    --         Nota: Los representantes deben venir primero en la lista
+    --         para que el trigger pueda validarlos correctamente
+    -- =========================================================
+    v_id_participante := 0;
+    
+    FOR i IN 1 .. p_participantes.COUNT LOOP
+        v_id_participante := v_id_participante + 1;
+        v_es_menor := FALSE;
+        
+        -- Determinar si el participante es cliente o visitante
+        IF p_participantes(i).es_cliente = 'S' THEN
+            -- Es un cliente existente o nuevo
+            IF p_participantes(i).id_persona IS NOT NULL THEN
+                -- Cliente existente
+                INSERT INTO INSCRITOS (
+                    fecha_tour_inscrito, nro_inscripcion, id,
+                    id_cliente_lego, id_visitante_lego
+                ) VALUES (
+                    p_fecha_tour, v_nro_inscripcion, v_id_participante,
+                    p_participantes(i).id_persona, NULL
+                );
+            ELSE
+                -- Crear nuevo cliente participante
+                SELECT NVL(MAX(id_lego), 0) + 1
+                INTO v_id_cliente_final
+                FROM CLIENTES;
+                
+                INSERT INTO CLIENTES (
+                    id_lego, primer_nombre, primer_apellido, segundo_apellido,
+                    email, fecha_nacimiento, id_pais_res, id_pais_nac,
+                    segundo_nombre, doc_identidad, pasaporte, fecha_venc_pasa
+                ) VALUES (
+                    v_id_cliente_final, 
+                    p_participantes(i).primer_nombre,
+                    p_participantes(i).primer_apellido,
+                    p_participantes(i).segundo_apellido,
+                    p_participantes(i).email,
+                    p_participantes(i).fecha_nacimiento,
+                    p_participantes(i).id_pais_res,
+                    p_participantes(i).id_pais_nac,
+                    p_participantes(i).segundo_nombre,
+                    p_participantes(i).doc_identidad,
+                    p_participantes(i).pasaporte,
+                    p_participantes(i).fecha_venc_pasa
+                );
+                
+                INSERT INTO INSCRITOS (
+                    fecha_tour_inscrito, nro_inscripcion, id,
+                    id_cliente_lego, id_visitante_lego
+                ) VALUES (
+                    p_fecha_tour, v_nro_inscripcion, v_id_participante,
+                    v_id_cliente_final, NULL
+                );
+            END IF;
+            
+            -- Verificar si es menor de 18 años
+            IF p_participantes(i).fecha_nacimiento IS NOT NULL THEN
+                SELECT TRUNC(MONTHS_BETWEEN(SYSDATE, p_participantes(i).fecha_nacimiento) / 12)
+                INTO v_edad_participante
+                FROM DUAL;
+                
+                IF v_edad_participante < 18 THEN
+                    v_es_menor := TRUE;
+                END IF;
+            END IF;
+            
+        ELSE
+            -- Es un visitante
+            IF p_participantes(i).id_persona IS NOT NULL THEN
+                -- Visitante existente
+                INSERT INTO INSCRITOS (
+                    fecha_tour_inscrito, nro_inscripcion, id,
+                    id_cliente_lego, id_visitante_lego
+                ) VALUES (
+                    p_fecha_tour, v_nro_inscripcion, v_id_participante,
+                    NULL, p_participantes(i).id_persona
+                );
+                
+                -- Obtener edad del visitante
+                SELECT TRUNC(MONTHS_BETWEEN(SYSDATE, fecha_nacimiento) / 12)
+                INTO v_edad_participante
+                FROM VISITANTE_MENORES
+                WHERE id_lego = p_participantes(i).id_persona;
+                
+                IF v_edad_participante < 18 THEN
+                    v_es_menor := TRUE;
+                END IF;
+            ELSE
+                -- Crear nuevo visitante
+                SELECT NVL(MAX(id_lego), 0) + 1
+                INTO v_id_cliente_final
+                FROM VISITANTE_MENORES;
+                
+                INSERT INTO VISITANTE_MENORES (
+                    id_lego, primer_nombre, primer_apellido, segundo_apellido,
+                    doc_identidad, fecha_nacimiento, pasaporte, id_pais_nac,
+                    id_cliente_repres, segundo_nombre, fecha_venc_pasa
+                ) VALUES (
+                    v_id_cliente_final,
+                    p_participantes(i).primer_nombre,
+                    p_participantes(i).primer_apellido,
+                    p_participantes(i).segundo_apellido,
+                    p_participantes(i).doc_identidad,
+                    p_participantes(i).fecha_nacimiento,
+                    p_participantes(i).pasaporte_visitante,
+                    p_participantes(i).id_pais_nac,
+                    p_participantes(i).id_representante,
+                    p_participantes(i).segundo_nombre,
+                    p_participantes(i).fecha_venc_pasa
+                );
+                
+                INSERT INTO INSCRITOS (
+                    fecha_tour_inscrito, nro_inscripcion, id,
+                    id_cliente_lego, id_visitante_lego
+                ) VALUES (
+                    p_fecha_tour, v_nro_inscripcion, v_id_participante,
+                    NULL, v_id_cliente_final
+                );
+                
+                -- Calcular edad
+                SELECT TRUNC(MONTHS_BETWEEN(SYSDATE, p_participantes(i).fecha_nacimiento) / 12)
+                INTO v_edad_participante
+                FROM DUAL;
+                
+                IF v_edad_participante < 18 THEN
+                    v_es_menor := TRUE;
+                END IF;
+            END IF;
+        END IF;
+        
+        -- =========================================================
+        -- PASO 8: Generar entrada para el participante
+        -- =========================================================
+        -- Generar ID de entrada
+        SELECT NVL(MAX(id), 0) + 1
+        INTO v_id_entrada
+        FROM ENTRADAS
+        WHERE fecha_tour_ins = p_fecha_tour
+          AND nro_inscripcion_tour = v_nro_inscripcion;
+        
+        INSERT INTO ENTRADAS (
+            fecha_tour_ins, nro_inscripcion_tour, id, tipo_cliente
+        ) VALUES (
+            p_fecha_tour, v_nro_inscripcion, v_id_entrada, p_participantes(i).tipo_cliente
+        );
+        
+    END LOOP;
+    
+    COMMIT;
+    
+    DBMS_OUTPUT.PUT_LINE('Inscripción registrada exitosamente.');
+    DBMS_OUTPUT.PUT_LINE('Tour: ' || TO_CHAR(p_fecha_tour, 'DD/MM/YYYY'));
+    DBMS_OUTPUT.PUT_LINE('Número de inscripción: ' || v_nro_inscripcion);
+    DBMS_OUTPUT.PUT_LINE('Costo total: ' || v_costo_total);
+    DBMS_OUTPUT.PUT_LINE('Participantes inscritos: ' || v_cantidad_nuevos);
+    
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20110, 'Error al procesar inscripción al tour: ' || SQLERRM);
+END sp_registrar_inscripcion_tour;
+/
+
+-- ==========================================
+-- TRIGGERS DE VALIDACIÓN
+-- ==========================================
+
+-- =========================================================
+-- TRIGGER 1: trg_bi_participante_menor
+-- Valida que menores de 18 años tengan representante
+-- y que ese representante esté en la inscripción
+-- =========================================================
+CREATE OR REPLACE TRIGGER trg_bi_participante_menor
+BEFORE INSERT ON INSCRITOS
+FOR EACH ROW
+DECLARE
+    v_edad_participante      NUMBER(3);
+    v_fecha_nacimiento       DATE;
+    v_id_representante       NUMBER(6);
+    v_representante_existe   NUMBER(1);
+    v_es_cliente             BOOLEAN;
+    
+    e_menor_sin_representante EXCEPTION;
+    e_representante_no_inscrito EXCEPTION;
+    
+    PRAGMA EXCEPTION_INIT(e_menor_sin_representante, -20120);
+    PRAGMA EXCEPTION_INIT(e_representante_no_inscrito, -20121);
+    
+BEGIN
+    -- 1. Determinar si es cliente o visitante y obtener fecha de nacimiento
+    IF :NEW.id_cliente_lego IS NOT NULL THEN
+        -- Es un cliente
+        v_es_cliente := TRUE;
+        BEGIN
+            SELECT fecha_nacimiento
+            INTO v_fecha_nacimiento
+            FROM CLIENTES
+            WHERE id_lego = :NEW.id_cliente_lego;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                RAISE_APPLICATION_ERROR(-20122, 'Error: El cliente con ID ' || :NEW.id_cliente_lego || ' no existe.');
+        END;
+    ELSIF :NEW.id_visitante_lego IS NOT NULL THEN
+        -- Es un visitante
+        v_es_cliente := FALSE;
+        BEGIN
+            SELECT fecha_nacimiento, id_cliente_repres
+            INTO v_fecha_nacimiento, v_id_representante
+            FROM VISITANTE_MENORES
+            WHERE id_lego = :NEW.id_visitante_lego;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                RAISE_APPLICATION_ERROR(-20123, 'Error: El visitante con ID ' || :NEW.id_visitante_lego || ' no existe.');
+        END;
+    ELSE
+        -- Error: debe ser cliente o visitante
+        RAISE_APPLICATION_ERROR(-20124, 'Error: El participante debe ser cliente o visitante.');
+    END IF;
+    
+    -- 2. Calcular la edad
+    v_edad_participante := TRUNC(MONTHS_BETWEEN(SYSDATE, v_fecha_nacimiento) / 12);
+    
+    -- 3. Si es menor de 18 años, validar representante
+    IF v_edad_participante < 18 THEN
+        -- Si es visitante, ya tenemos el representante en v_id_representante
+        -- Si es cliente, no debería tener representante (los clientes son mayores de 21)
+        -- Pero por seguridad, validamos
+        
+        IF NOT v_es_cliente THEN
+            -- Es visitante menor
+            IF v_id_representante IS NULL THEN
+                RAISE_APPLICATION_ERROR(-20120, 
+                    'Error: El visitante menor de edad (ID: ' || :NEW.id_visitante_lego || 
+                    ', Edad: ' || v_edad_participante || 
+                    ' años) debe tener un representante asignado.');
+            END IF;
+            
+            -- 4. Verificar que el representante también está inscrito en el mismo tour
+            --    Nota: Si el representante se está insertando en la misma transacción,
+            --    el procedimiento sp_registrar_inscripcion_tour debe insertarlo primero.
+            --    Este trigger valida que el representante ya exista en la base de datos.
+            SELECT COUNT(*)
+            INTO v_representante_existe
+            FROM INSCRITOS
+            WHERE fecha_tour_inscrito = :NEW.fecha_tour_inscrito
+              AND nro_inscripcion = :NEW.nro_inscripcion
+              AND id_cliente_lego = v_id_representante;
+            
+            IF v_representante_existe = 0 THEN
+                RAISE_APPLICATION_ERROR(-20121, 
+                    'Error: El representante del visitante menor (ID: ' || :NEW.id_visitante_lego || 
+                    ') con ID ' || v_id_representante || 
+                    ' debe estar inscrito en el mismo tour. ' ||
+                    'Nota: Si se están insertando múltiples participantes, ' ||
+                    'el representante debe insertarse primero.');
+            END IF;
+        ELSE
+            -- Cliente menor de 18 (no debería pasar por el trigger de edad de clientes)
+            -- Pero por seguridad, validamos
+            RAISE_APPLICATION_ERROR(-20125, 
+                'Error: Los clientes deben ser mayores de 21 años. Cliente ID: ' || :NEW.id_cliente_lego);
+        END IF;
+    END IF;
+    
+EXCEPTION
+    WHEN OTHERS THEN
+        -- Re-lanzar errores personalizados
+        IF SQLCODE BETWEEN -20120 AND -20125 THEN
+            RAISE;
+        ELSE
+            RAISE_APPLICATION_ERROR(-20126, 'Error en validación de participante menor: ' || SQLERRM);
+        END IF;
+END;
+/
+
+-- =========================================================
+-- TRIGGER 2: trg_bi_inscripcion_cupo
+-- Valida que no se exceda la capacidad máxima del tour
+-- Nota: Este trigger valida individualmente cada registro.
+-- El procedimiento sp_registrar_inscripcion_tour ya valida
+-- la capacidad total antes de insertar múltiples participantes.
+-- =========================================================
+CREATE OR REPLACE TRIGGER trg_bi_inscripcion_cupo
+BEFORE INSERT ON INSCRITOS
+FOR EACH ROW
+DECLARE
+    v_capacidad_maxima       NUMBER(2);
+    v_participantes_actuales NUMBER(3);
+    
+    e_sin_cupo EXCEPTION;
+    PRAGMA EXCEPTION_INIT(e_sin_cupo, -20130);
+    
+BEGIN
+    -- 1. Obtener la capacidad máxima del tour
+    BEGIN
+        SELECT capacidad_maxima
+        INTO v_capacidad_maxima
+        FROM TOURS
+        WHERE fecha_inicio = :NEW.fecha_tour_inscrito;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE_APPLICATION_ERROR(-20131, 
+                'Error: El tour con fecha ' || TO_CHAR(:NEW.fecha_tour_inscrito, 'DD/MM/YYYY') || ' no existe.');
+    END;
+    
+    -- 2. Contar participantes actuales en el tour
+    --    Nota: El trigger se ejecuta ANTES del INSERT, por lo que el registro
+    --    aún no existe en la tabla. Contamos los existentes y sumamos 1.
+    SELECT COUNT(*)
+    INTO v_participantes_actuales
+    FROM INSCRITOS
+    WHERE fecha_tour_inscrito = :NEW.fecha_tour_inscrito;
+    
+    -- 3. Sumar 1 por el registro que se está insertando
+    v_participantes_actuales := v_participantes_actuales + 1;
+    
+    -- 4. Validar capacidad
+    IF v_participantes_actuales > v_capacidad_maxima THEN
+        RAISE_APPLICATION_ERROR(-20130, 
+            'Error: Se excede la capacidad máxima del tour. ' ||
+            'Fecha tour: ' || TO_CHAR(:NEW.fecha_tour_inscrito, 'DD/MM/YYYY') ||
+            ', Capacidad máxima: ' || v_capacidad_maxima || 
+            ', Participantes después de este insert: ' || v_participantes_actuales);
+    END IF;
+    
+EXCEPTION
+    WHEN OTHERS THEN
+        IF SQLCODE BETWEEN -20130 AND -20131 THEN
+            RAISE;
+        ELSE
+            RAISE_APPLICATION_ERROR(-20132, 'Error en validación de cupo: ' || SQLERRM);
+        END IF;
+END;
+/
